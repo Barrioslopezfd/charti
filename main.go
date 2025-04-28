@@ -1,27 +1,80 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
-	"path/filepath"
-
-	"helm.sh/helm/v3/pkg/action"
-	"helm.sh/helm/v3/pkg/cli"
+	"net/http"
+	"strings"
 )
 
 func main() {
-	settings := cli.New()
-	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "memory", log.Printf); err != nil {
-		log.Fatalf("Error initializing action configuration: %v", err)
+	http.HandleFunc("GET /api/chart/", handlerChart)
+	log.Println("Listening to port 8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func handlerChart(w http.ResponseWriter, r *http.Request) {
+	url := r.URL.Path
+	chart_url := strings.TrimPrefix(url, "/api/chart/")
+
+	f, err := getIndexFile(chart_url)
+	if err != nil {
+		responseWithError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
-	pull := action.NewPullWithOpts(action.WithConfig(actionConfig))
-	pull.RepoURL = "https://charts.bitnami.com/bitnami"
-	pull.DestDir = filepath.Join(".")
-	pull.Untar = false // Cambiar a true si se desea descomprimir el chart
+	var infoList []map[string]string
 
-	chartName := "nginx"
-	if _, err := pull.Run(chartName); err != nil {
-		log.Fatalf("Error pulling chart: %v", err)
+	for _, charts := range f.Entries {
+		for _, chart := range charts {
+			if len(chart.URLs) < 1 {
+				continue
+			}
+			downloadTgzFile(chart.URLs[0])
+			idx := strings.LastIndex(chart.URLs[0], "/")
+			val, err := renderHelmChart("./charts/" + chart.URLs[0][idx:])
+			if err != nil {
+				responseWithError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			infoList, err = getContainerImages(val)
+			if err != nil {
+				responseWithError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			infoList, err = downloadDockerImages(infoList)
+			if err != nil {
+				responseWithError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(infoList); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func responseWithError(w http.ResponseWriter, code int, msg string) {
+	type retError struct {
+		Error string `json:"error"`
+	}
+	datErr := retError{
+		Error: msg,
+	}
+	datWrong, err := json.Marshal(datErr)
+	if err != nil {
+		log.Printf("Error marshaling json: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(500)
+		return
+	}
+	log.Printf("%s", msg)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(datWrong)
 }
