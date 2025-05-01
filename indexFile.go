@@ -146,9 +146,6 @@ func getContainerImages(values []byte) ([]map[string]string, error) {
 func downloadDockerImages(images []map[string]string) ([]map[string]string, error) {
 	dockerPath := "./docker"
 
-	if err := os.MkdirAll(dockerPath, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("error creating docker directory: %v", err)
-	}
 	for i, img := range images {
 		imageRef := img["name"]
 		fmt.Printf("Processing image: %s\n", imageRef)
@@ -164,7 +161,7 @@ func downloadDockerImages(images []map[string]string) ([]map[string]string, erro
 			return nil, fmt.Errorf("error downloading image %s: %s", imageRef, err.Error())
 		}
 
-		outputPath := fmt.Sprintf("%s/%s.tar", dockerPath, ref.Context().Name())
+		outputPath := fmt.Sprintf("%s/%s.tar", dockerPath, imageRef)
 		f, err := os.Create(outputPath)
 		if err != nil {
 			return nil, fmt.Errorf("error creating file container for %s: %s", imageRef, err.Error())
